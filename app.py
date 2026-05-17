@@ -1,163 +1,154 @@
 import streamlit as st
 import numpy as np
+import matplotlib.pyplot as plt
 import requests
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-# --- 1. THE RE-OPTIMIZED CORE PHYSICS ENGINE ---
+# --- 1. THE POWER SOURCE ---
 class SolarPVArray:
-    def __init__(self, p_nom, alpha=-0.004):
+    def __init__(self, p_nom, alpha, g_ref=1000, t_ref=25):
         self.p_nom = p_nom
         self.alpha = alpha
+        self.g_ref = g_ref
+        self.t_ref = t_ref
 
     def get_power(self, g, t_c):
-        return max(0, self.p_nom * (g / 1000) * (1 + self.alpha * (t_c - 25)))
+        irradiance_ratio = g / self.g_ref
+        temp_penalty = 1 + (self.alpha * (t_c - self.t_ref))
+        return max(0, self.p_nom * irradiance_ratio * temp_penalty)
 
+# --- 2. THE STORAGE (Battery) ---
 class BatteryStorage:
     def __init__(self, capacity_wh):
         self.capacity_wh = capacity_wh
-        self.current_charge_wh = capacity_wh * 0.3  # Starts at 30% baseline buffer
+        self.current_charge_wh = 0
 
     def charge(self, power_in):
         self.current_charge_wh = min(self.capacity_wh, self.current_charge_wh + power_in)
 
     def discharge(self, power_needed):
-        provided = min(power_needed, self.current_charge_wh)
-        self.current_charge_wh -= provided
-        return provided
+        actual_power_provided = min(power_needed, self.current_charge_wh)
+        self.current_charge_wh -= actual_power_provided
+        return actual_power_provided
 
-# --- 2. PREMIUM HIGH-CONTRAST DASHBOARD ---
-st.set_page_config(page_title="AI Smart Microgrid Optimization", layout="wide")
+# --- 3. THE LOAD (Electrolyzer) ---
+class HydrogenElectrolyzer:
+    def __init__(self, stack_voltage, num_cells, faraday_efficiency=0.9):
+        self.stack_voltage = stack_voltage
+        self.num_cells = num_cells
+        self.faraday_efficiency = faraday_efficiency
+        self.faraday_constant = 96485
+        self.molar_mass_h2 = 0.002016
 
-# High-contrast UI theme for extreme text and graph visibility
-st.markdown("""
-    <style>
-    div[data-testid="stMetricValue"] {
-        color: #00ff88 !important;
-        font-weight: 700 !important;
-        font-size: 2.2rem !important;
-    }
-    div[data-testid="stMetricLabel"] {
-        color: #ffffff !important;
-        font-weight: 600 !important;
-        font-size: 1.1rem !important;
-    }
-    div[data-testid="stMetric"] {
-        background-color: #1e2630 !important;
-        padding: 20px !important;
-        border-radius: 12px !important;
-        border: 2px solid #343d4c !important;
-        box-shadow: 0 6px 12px rgba(0,0,0,0.4) !important;
-    }
-    h1 { color: #ffffff !important; font-weight: 700 !important; }
-    p, span { color: #cbd5e1 !important; }
-    </style>
-    """, unsafe_allow_html=True)
+    def get_h2_kg_per_hour(self, power_in_watts):
+        current = power_in_watts / self.stack_voltage
+        moles_per_second = (self.faraday_efficiency * self.num_cells * current) / (2 * self.faraday_constant)
+        return moles_per_second * self.molar_mass_h2 * 3600
 
-st.title("⚡ AI-Driven Smart Microgrid Dashboard")
-st.markdown("### Predictive Orchestration Engine utilizing Machine Learning heuristics for optimal power flow.")
+# --- NEW: 4. THE AI PREDICTIVE ENGINE ---
+class AIEngine:
+    def __init__(self, solar_array):
+        self.solar_array = solar_array
 
-# Sidebar Control Panel
-st.sidebar.header("⚙️ Grid Parameters")
-sol_cap = st.sidebar.slider("Solar PV Capacity (Watts)", 1000, 10000, 5000, 500)
-bat_cap = st.sidebar.slider("Battery Storage Capacity (Wh)", 2000, 20000, 10000, 1000)
+    def predict_tomorrow_energy(self, g_array_tomorrow, t_array_tomorrow):
+        total_energy = 0
+        for i in range(24):
+            total_energy += self.solar_array.get_power(g_array_tomorrow[i], t_array_tomorrow[i])
+        return total_energy
 
+    def optimize_load(self, base_target, predicted_tomorrow_energy, nominal_daily_energy):
+        # AI Decision Logic based on future physical constraints
+        if predicted_tomorrow_energy < (0.7 * nominal_daily_energy):
+            st.sidebar.error("⚠️ AI Alert: Heavy cloud cover detected for tomorrow. Activating Conservation Mode.")
+            return base_target * 0.6  # Drop load by 40% to aggressively charge battery today
+        elif predicted_tomorrow_energy > (1.1 * nominal_daily_energy):
+            st.sidebar.success("☀️ AI Alert: Maximum solar yield expected tomorrow. Activating Aggressive Mode.")
+            return base_target * 1.2  # Increase load by 20% to maximize H2
+        else:
+            st.sidebar.info("🤖 AI Status: Tomorrow's weather is stable. Maintaining nominal target.")
+            return base_target
+
+# --- 5. DATA LAYER (Now fetching 2 days of data) ---
 @st.cache_data 
-def fetch_grid_weather(lat, lon):
-    res = requests.get(f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,shortwave_radiation&timezone=auto&forecast_days=2").json()
-    return (np.array(res['hourly']['shortwave_radiation'][:24]), np.array(res['hourly']['temperature_2m'][:24]),
-            np.array(res['hourly']['shortwave_radiation'][24:48]), np.array(res['hourly']['temperature_2m'][24:48]))
+def get_live_weather_data(lat, lon):
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,shortwave_radiation&timezone=auto&forecast_days=2"
+    response = requests.get(url)
+    data = response.json()
+    
+    # Slice the data into Today (0-24) and Tomorrow (24-48)
+    t_today = np.array(data['hourly']['temperature_2m'][:24])
+    g_today = np.array(data['hourly']['shortwave_radiation'][:24])
+    t_tomorrow = np.array(data['hourly']['temperature_2m'][24:48])
+    g_tomorrow = np.array(data['hourly']['shortwave_radiation'][24:48])
+    
+    return g_today, t_today, g_tomorrow, t_tomorrow
 
-# Live data for Kolkata Region
-g_today, t_today, g_tomorrow, t_tomorrow = fetch_grid_weather(22.5726, 88.3639)
+# --- 6. THE WEB DASHBOARD UI ---
+st.set_page_config(page_title="Microgrid AI Twin", layout="wide")
+st.title("🧠 AI-Driven Smart Microgrid Dashboard")
+st.markdown("Predictive Orchestration Engine utilizing Machine Learning heuristics for optimal power flow.")
 
-# --- 3. DYNAMIC PREDICTIVE AI LOGIC ---
-nominal_daily_generation = sol_cap * 5
-total_solar_today = sum([SolarPVArray(sol_cap).get_power(g_today[i], t_today[i]) for i in range(24)])
-predicted_tomorrow_solar = sum([SolarPVArray(sol_cap).get_power(g_tomorrow[i], t_tomorrow[i]) for i in range(24)])
+# UI Sidebar
+st.sidebar.header("⚙️ Hardware Parameters")
+user_solar_capacity = st.sidebar.slider("Solar Capacity (Watts)", 1000, 10000, 5000, 500)
+user_battery_capacity = st.sidebar.slider("Battery Capacity (Wh)", 2000, 20000, 10000, 1000)
+user_target_power = st.sidebar.slider("Nominal Electrolyzer Target (W)", 500, 5000, 2000, 500)
 
-# AI optimization threshold adjustments
-if predicted_tomorrow_solar < (0.4 * nominal_daily_generation):
-    ai_report = "Aggressive Conservation Mode Activated"
-    target_h2_power = 1200  # Throttled operation to safeguard the grid buffer
-    status_color = "orange"
-else:
-    ai_report = "Optimal Dispatch System Running"
-    target_h2_power = 2400  # Standard continuous load allocation
-    status_color = "green"
+# Fetch 48-Hour Data
+g_today, t_today, g_tomorrow, t_tomorrow = get_live_weather_data(22.5726, 88.3639)
+hours = np.arange(24)
 
-# Simulation Variables
-bat = BatteryStorage(bat_cap)
-logs = {"solar": [], "h2": [], "bat": []}
+# Initialize Hardware & AI
+my_solar = SolarPVArray(p_nom=user_solar_capacity, alpha=-0.004)
+my_battery = BatteryStorage(capacity_wh=user_battery_capacity) 
+my_electrolyzer = HydrogenElectrolyzer(stack_voltage=48, num_cells=30)
+my_ai = AIEngine(solar_array=my_solar)
 
-# Power Routing Simulation Loop
+# AI IN ACTION: Predict and Optimize before running the grid
+st.sidebar.header("🧠 AI Diagnostic Layer")
+nominal_daily_energy = user_solar_capacity * 5  # Rough estimate of a perfect day
+predicted_tomorrow = my_ai.predict_tomorrow_energy(g_tomorrow, t_tomorrow)
+
+# The AI overrides the user's manual target based on the future!
+ai_optimized_target = my_ai.optimize_load(user_target_power, predicted_tomorrow, nominal_daily_energy)
+
+st.sidebar.write(f"**Manual Target:** {user_target_power} W")
+st.sidebar.write(f"**AI Adjusted Target:** {ai_optimized_target:.1f} W")
+
+power_to_electrolyzer_log = []
+battery_state_log = []
+solar_power_log = []
+
+# ORCHESTRATION LOOP (Using AI's target)
 for i in range(24):
-    p_sun = SolarPVArray(sol_cap).get_power(g_today[i], t_today[i])
-    logs["solar"].append(p_sun)
-    
-    # Priority 1: Meet target industrial load directly from solar or battery asset
-    available_power = p_sun
-    p_h2_actual = 0
-    
-    if available_power >= target_h2_power:
-        p_h2_actual = target_h2_power
-        available_power -= target_h2_power
+    current_solar = my_solar.get_power(g_today[i], t_today[i])
+    solar_power_log.append(current_solar)
+
+    if current_solar >= ai_optimized_target:
+        actual_power_to_electrolyzer = ai_optimized_target
+        excess_power = current_solar - ai_optimized_target
+        my_battery.charge(excess_power)
     else:
-        # Solar deficit, draw remaining dispatch from battery buffer
-        deficit = target_h2_power - available_power
-        battery_support = bat.discharge(deficit)
-        p_h2_actual = available_power + battery_support
-        available_power = 0
-        
-    logs["h2"].append(p_h2_actual)
-    
-    # Priority 2: Charge excess remaining solar power into battery storage
-    if available_power > 0:
-        bat.charge(available_power)
-    logs["bat"].append(bat.current_charge_wh)
+        deficit = ai_optimized_target - current_solar
+        power_from_battery = my_battery.discharge(deficit)
+        actual_power_to_electrolyzer = current_solar + power_from_battery
 
-# Commodity Mass Calculation (Faraday Equivalent Conversion Metric)
-total_h2_kg = sum(logs["h2"]) * 0.000268 
+    power_to_electrolyzer_log.append(actual_power_to_electrolyzer)
+    battery_state_log.append(my_battery.current_charge_wh)
 
-# Render High Contrast Performance Metrics
-st.markdown("<br>", unsafe_allow_html=True)
-c1, c2 = st.columns(2)
-c1.metric("🔮 Tomorrow's AI Prediction Report", ai_report)
-c2.metric("🔋 Total Green Hydrogen Produced Today", f"{total_h2_kg:.3f} kg")
-st.markdown("<br>", unsafe_allow_html=True)
+# Calculate Outputs
+h2_produced = [my_electrolyzer.get_h2_kg_per_hour(p) for p in power_to_electrolyzer_log]
+total_h2 = sum(h2_produced)
 
-# --- 4. THE INDUSTRIAL DUAL-AXIS GRAPH (CLEAN & FILL DESIGN) ---
-fig = make_subplots(specs=[[{"secondary_y": True}]])
+# UI Display
+st.metric(label="Total Green Hydrogen Produced Today", value=f"{total_h2:.3f} kg")
 
-# Left Axis (Power): Solar and Hydrogen Curves
-fig.add_trace(go.Scatter(x=list(range(24)), y=logs["solar"], name="Raw Solar Power (W)", line=dict(color='#FFA500', width=3, dash='dash')), secondary_y=False)
-fig.add_trace(go.Scatter(x=list(range(24)), y=logs["h2"], name=f"AI Managed Power ({target_h2_power} W Target)", fill='tozeroy', line=dict(color='#00FF88', width=3), fillcolor='rgba(0, 255, 136, 0.15)'), secondary_y=False)
-
-# Right Axis (Energy): Independent Battery Scaling (Clean area fill)
-fig.add_trace(go.Scatter(x=list(range(24)), y=logs["bat"], name="Battery Charge Level (Wh)", line=dict(color='#BF40BF', width=4), fill='tozeroy', fillcolor='rgba(191, 64, 191, 0.08)'), secondary_y=True)
-
-# Design layout adjustments for extreme scannability
-fig.update_layout(
-    title=dict(text="⚡ 24-Hour Microgrid Power & Storage Performance Mapping", font=dict(size=18, color='#ffffff')),
-    template="plotly_dark", 
-    height=550, 
-    hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    margin=dict(l=60, r=60, t=80, b=60),
-    plot_bgcolor='#0e1117',
-    paper_bgcolor='#0e1117'
-)
-
-fig.update_yaxes(title_text="<b>Power / Energy Flow Rate (Watts)</b>", title_font=dict(color="#FFA500"), secondary_y=False, gridcolor='rgba(255,255,255,0.05)')
-fig.update_yaxes(title_text="<b>Battery Storage Balance (Watt-Hours)</b>", title_font=dict(color="#BF40BF"), secondary_y=True, gridcolor='rgba(255,255,255,0.05)', range=[0, bat_cap * 1.1])
-fig.update_xaxes(title_text="Hour of the Day", tickmode='linear', tick0=0, dtick=1, gridcolor='rgba(255,255,255,0.05)')
-
-st.plotly_chart(fig, use_container_width=True)
-
-# Sidebar HUD Status Alerts
-st.sidebar.markdown("---")
-st.sidebar.subheader("📢 Diagnostics HUD")
-if ai_report == "Optimal Dispatch System Running":
-    st.sidebar.success("🟢 System Stable. Tomorrow's solar irradiance projections allow full operations.", icon="⚙️")
-else:
-    st.sidebar.warning("⚠️ High Cloud Cover Forecasted. AI throttling production constraints to lock storage buffer.", icon="⏳")
+fig, ax = plt.subplots(figsize=(12, 5))
+ax.plot(hours, solar_power_log, label="Raw Solar Power (W)", color="orange", linestyle="--", linewidth=2)
+ax.plot(hours, power_to_electrolyzer_log, label=f"AI Managed Power ({ai_optimized_target:.0f} W)", color="green", linewidth=3)
+ax.fill_between(hours, battery_state_log, color="purple", alpha=0.3, label="Battery Charge Level (Wh)")
+ax.set_xlabel("Hour of the Day")
+ax.set_ylabel("Power / Energy")
+ax.legend()
+ax.grid(True)
+ax.set_xticks(hours)
+st.pyplot(fig)
