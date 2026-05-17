@@ -5,35 +5,53 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ---------------- PAGE CONFIG ----------------
+
 st.set_page_config(
     page_title="AI Smart Microgrid",
     layout="wide"
 )
 
 # ---------------- CUSTOM CSS ----------------
+
 st.markdown("""
 <style>
+
+body {
+    background-color: #0e1117;
+}
+
+.stApp {
+    background-color: #0e1117;
+    color: white;
+}
 
 .main {
     background-color: #0e1117;
     color: white;
 }
 
-h1, h2, h3 {
+h1, h2, h3, h4, h5, h6 {
+    color: white;
+}
+
+p, label, div {
     color: white;
 }
 
 [data-testid="stSidebar"] {
-    background-color: #161b22;
+    background-color: #111827;
 }
 
-.metric-card {
+[data-testid="metric-container"] {
     background-color: #1f2937;
+    border: 1px solid #374151;
     padding: 20px;
     border-radius: 15px;
-    text-align: center;
-    color: white;
     box-shadow: 0px 0px 15px rgba(0,255,255,0.2);
+}
+
+.stAlert {
+    border-radius: 15px;
 }
 
 </style>
@@ -42,18 +60,29 @@ h1, h2, h3 {
 # ---------------- HYBRID SYSTEM ----------------
 
 class SolarPVArray:
+
     def __init__(self, p_nom, alpha=-0.004):
+
         self.p_nom = p_nom
         self.alpha = alpha
 
     def get_power(self, g, t_c):
+
         return max(
             0,
             self.p_nom * (g / 1000) * (1 + self.alpha * (t_c - 25))
         )
 
 class WindTurbine:
-    def __init__(self, p_rated, v_in=3.0, v_rated=12.0, v_out=25.0):
+
+    def __init__(
+        self,
+        p_rated,
+        v_in=3.0,
+        v_rated=12.0,
+        v_out=25.0
+    ):
+
         self.p_rated = p_rated
         self.v_in = v_in
         self.v_rated = v_rated
@@ -62,9 +91,11 @@ class WindTurbine:
     def get_power(self, v_wind, wind_dir):
 
         if v_wind < self.v_in or v_wind > self.v_out:
+
             p_base = 0
 
         elif self.v_in <= v_wind <= self.v_rated:
+
             p_base = self.p_rated * (
                 (v_wind**3 - self.v_in**3)
                 /
@@ -72,6 +103,7 @@ class WindTurbine:
             )
 
         else:
+
             p_base = self.p_rated
 
         misalignment_angle = abs(180 - wind_dir)
@@ -84,7 +116,9 @@ class WindTurbine:
         return p_base * yaw_efficiency
 
 class BatteryStorage:
+
     def __init__(self, capacity_wh):
+
         self.capacity_wh = capacity_wh
         self.current_charge_wh = capacity_wh * 0.3
 
@@ -157,7 +191,7 @@ base_target = st.sidebar.slider(
     2000
 )
 
-# ---------------- FETCH DATA ----------------
+# ---------------- FETCH WEATHER ----------------
 
 g_today, t_today, w_spd_today, w_dir_today, g_tmrw = fetch_weather(
     22.57,
@@ -230,9 +264,11 @@ for i in range(24):
 
     logs["bat"].append(bat.current_charge_wh)
 
-# ---------------- METRICS ----------------
+# ---------------- HYDROGEN ----------------
 
 total_h2_kg = sum(logs["h2"]) * 0.000268
+
+# ---------------- TITLE ----------------
 
 st.title("🧠 AI-Driven Smart Microgrid Dashboard")
 
@@ -245,52 +281,79 @@ st.markdown(
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.metric("☀️ Solar Peak", f"{max(logs['solar']):.0f} W")
+
+    st.metric(
+        "☀️ Solar Peak",
+        f"{max(logs['solar']):.0f} W"
+    )
 
 with col2:
-    st.metric("🌪 Wind Peak", f"{max(logs['wind']):.0f} W")
+
+    st.metric(
+        "🌪 Wind Peak",
+        f"{max(logs['wind']):.0f} W"
+    )
 
 with col3:
-    st.metric("🔋 Battery", f"{logs['bat'][-1]:.0f} Wh")
+
+    st.metric(
+        "🔋 Battery",
+        f"{logs['bat'][-1]:.0f} Wh"
+    )
 
 with col4:
-    st.metric("🧪 Hydrogen", f"{total_h2_kg:.3f} kg")
+
+    st.metric(
+        "🧪 Hydrogen",
+        f"{total_h2_kg:.3f} kg"
+    )
 
 # ---------------- AI STATUS ----------------
 
 st.success(ai_status)
 
-# ---------------- PLOTLY GRAPH ----------------
+# ---------------- GRAPH ----------------
+
+st.subheader("⚡ Smart Energy Flow")
 
 fig = make_subplots(
     specs=[[{"secondary_y": True}]]
 )
 
 # Solar
+
 fig.add_trace(
     go.Scatter(
         x=list(range(24)),
         y=logs['solar'],
         mode='lines',
         name='Solar Power',
-        line=dict(width=4, dash='dash')
+        line=dict(
+            width=4,
+            dash='dash'
+        )
     ),
     secondary_y=False
 )
 
 # Wind
+
 fig.add_trace(
     go.Scatter(
         x=list(range(24)),
         y=logs['wind'],
         mode='lines',
         name='Wind Power',
-        line=dict(width=3, dash='dot')
+        line=dict(
+            width=3,
+            dash='dot'
+        )
     ),
     secondary_y=False
 )
 
-# AI Power
+# AI Managed Power
+
 fig.add_trace(
     go.Scatter(
         x=list(range(24)),
@@ -303,25 +366,38 @@ fig.add_trace(
 )
 
 # Battery
+
 fig.add_trace(
     go.Scatter(
         x=list(range(24)),
         y=logs['bat'],
         fill='tozeroy',
         name='Battery Storage',
-        opacity=0.3
+        opacity=0.35
     ),
     secondary_y=True
 )
 
+# Layout
+
 fig.update_layout(
-    title="⚡ Smart Energy Flow",
     template="plotly_dark",
     height=600,
-    hovermode="x unified"
+    hovermode="x unified",
+    paper_bgcolor="#0e1117",
+    plot_bgcolor="#0e1117",
+    font=dict(
+        color="white",
+        size=14
+    ),
+    legend=dict(
+        bgcolor="#111827"
+    )
 )
 
-fig.update_xaxes(title_text="Hour")
+fig.update_xaxes(
+    title_text="Hour of Day"
+)
 
 fig.update_yaxes(
     title_text="Power (W)",
@@ -344,7 +420,7 @@ st.sidebar.markdown("---")
 
 st.sidebar.subheader("🧠 AI Diagnostic Layer")
 
-st.sidebar.info(ai_status)
+st.sidebar.success(ai_status)
 
 st.sidebar.markdown(
     f"### 🎯 AI Adjusted Target: {target_h2:.0f} W"
