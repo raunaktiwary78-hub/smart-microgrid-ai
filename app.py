@@ -311,6 +311,72 @@ with col4:
 # ---------------- AI STATUS ----------------
 
 st.success(ai_status)
+# ---------------- AI PREDICTION PANEL ----------------
+
+st.markdown("""
+<div style="
+background: linear-gradient(135deg,#111827,#1f2937);
+padding:25px;
+border-radius:20px;
+margin-top:20px;
+margin-bottom:20px;
+box-shadow:0px 0px 25px rgba(0,255,255,0.15);
+">
+
+<h2 style="
+color:white;
+text-align:center;
+margin-bottom:25px;
+">
+🧠 AI Prediction Center
+</h2>
+
+<div style="
+color:#00ffcc;
+font-size:20px;
+padding:12px;
+margin-bottom:15px;
+background-color:rgba(0,255,255,0.08);
+border-radius:12px;
+">
+⚡ Predicted Solar Peak at 12:00 PM
+</div>
+
+<div style="
+color:#66ff99;
+font-size:20px;
+padding:12px;
+margin-bottom:15px;
+background-color:rgba(0,255,100,0.08);
+border-radius:12px;
+">
+🔋 Battery Reserve Mode Activated
+</div>
+
+<div style="
+color:#ffcc66;
+font-size:20px;
+padding:12px;
+margin-bottom:15px;
+background-color:rgba(255,200,0,0.08);
+border-radius:12px;
+">
+🌪 Wind Stability Expected Tonight
+</div>
+
+<div style="
+color:#ff66cc;
+font-size:20px;
+padding:12px;
+background-color:rgba(255,0,150,0.08);
+border-radius:12px;
+">
+🧪 Hydrogen Production Optimized by AI
+</div>
+
+</div>
+""", unsafe_allow_html=True)
+
 
 # ---------------- GRAPH ----------------
 
