@@ -1,34 +1,86 @@
 import streamlit as st
 import numpy as np
 import requests
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-# --- 1. THE HYBRID PHYSICS ENGINE ---
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(
+    page_title="AI Smart Microgrid",
+    layout="wide"
+)
+
+# ---------------- CUSTOM CSS ----------------
+st.markdown("""
+<style>
+
+.main {
+    background-color: #0e1117;
+    color: white;
+}
+
+h1, h2, h3 {
+    color: white;
+}
+
+[data-testid="stSidebar"] {
+    background-color: #161b22;
+}
+
+.metric-card {
+    background-color: #1f2937;
+    padding: 20px;
+    border-radius: 15px;
+    text-align: center;
+    color: white;
+    box-shadow: 0px 0px 15px rgba(0,255,255,0.2);
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------- HYBRID SYSTEM ----------------
+
 class SolarPVArray:
     def __init__(self, p_nom, alpha=-0.004):
         self.p_nom = p_nom
         self.alpha = alpha
 
     def get_power(self, g, t_c):
-        return max(0, self.p_nom * (g / 1000) * (1 + self.alpha * (t_c - 25)))
+        return max(
+            0,
+            self.p_nom * (g / 1000) * (1 + self.alpha * (t_c - 25))
+        )
 
 class WindTurbine:
     def __init__(self, p_rated, v_in=3.0, v_rated=12.0, v_out=25.0):
         self.p_rated = p_rated
-        self.v_in = v_in      
-        self.v_rated = v_rated 
-        self.v_out = v_out    
+        self.v_in = v_in
+        self.v_rated = v_rated
+        self.v_out = v_out
 
     def get_power(self, v_wind, wind_dir):
+
         if v_wind < self.v_in or v_wind > self.v_out:
             p_base = 0
+
         elif self.v_in <= v_wind <= self.v_rated:
-            p_base = self.p_rated * ((v_wind**3 - self.v_in**3) / (self.v_rated**3 - self.v_in**3))
+            p_base = self.p_rated * (
+                (v_wind**3 - self.v_in**3)
+                /
+                (self.v_rated**3 - self.v_in**3)
+            )
+
         else:
             p_base = self.p_rated
-            
+
         misalignment_angle = abs(180 - wind_dir)
-        yaw_efficiency = max(0.85, 1 - (misalignment_angle * 0.001)) 
+
+        yaw_efficiency = max(
+            0.85,
+            1 - (misalignment_angle * 0.001)
+        )
+
         return p_base * yaw_efficiency
 
 class BatteryStorage:
@@ -37,113 +89,263 @@ class BatteryStorage:
         self.current_charge_wh = capacity_wh * 0.3
 
     def charge(self, power_in):
-        self.current_charge_wh = min(self.capacity_wh, self.current_charge_wh + power_in)
+
+        self.current_charge_wh = min(
+            self.capacity_wh,
+            self.current_charge_wh + power_in
+        )
 
     def discharge(self, power_needed):
-        provided = min(power_needed, self.current_charge_wh)
+
+        provided = min(
+            power_needed,
+            self.current_charge_wh
+        )
+
         self.current_charge_wh -= provided
+
         return provided
 
-# --- 2. SIMPLE ORIGINAL UI ---
-st.set_page_config(page_title="AI Hybrid Microgrid", layout="wide")
+# ---------------- WEATHER API ----------------
 
-st.title("🧠 AI-Driven Smart Microgrid Dashboard")
-st.markdown("Predictive Orchestration Engine utilizing Machine Learning heuristics for optimal power flow (Solar + Wind).")
+@st.cache_data
+def fetch_weather(lat, lon):
 
-# Sidebar
-st.sidebar.header("⚙️ Hardware Parameters")
-sol_cap = st.sidebar.slider("Solar Capacity (Watts)", 1000, 10000, 5000)
-wind_cap = st.sidebar.slider("Wind Turbine Capacity (Watts)", 1000, 10000, 4000)
-bat_cap = st.sidebar.slider("Battery Capacity (Wh)", 2000, 20000, 10000)
-base_target = st.sidebar.slider("Nominal Electrolyzer Target (W)", 1000, 5000, 2000)
-
-@st.cache_data 
-def fetch_hybrid_weather(lat, lon):
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,shortwave_radiation,wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=auto&forecast_days=2"
+
     res = requests.get(url).json()
+
     h = res['hourly']
-    return (np.array(h['shortwave_radiation'][:24]), np.array(h['temperature_2m'][:24]), 
-            np.array(h['wind_speed_10m'][:24]), np.array(h['wind_direction_10m'][:24]),
-            np.array(h['shortwave_radiation'][24:48]))
 
-# Kolkata Coordinates
-g_today, t_today, w_spd_today, w_dir_today, g_tmrw = fetch_hybrid_weather(22.57, 88.36)
+    return (
+        np.array(h['shortwave_radiation'][:24]),
+        np.array(h['temperature_2m'][:24]),
+        np.array(h['wind_speed_10m'][:24]),
+        np.array(h['wind_direction_10m'][:24]),
+        np.array(h['shortwave_radiation'][24:48])
+    )
 
-# --- 3. AI LOGIC ---
+# ---------------- SIDEBAR ----------------
+
+st.sidebar.title("⚙️ Hardware Parameters")
+
+sol_cap = st.sidebar.slider(
+    "Solar Capacity (W)",
+    1000,
+    10000,
+    5000
+)
+
+wind_cap = st.sidebar.slider(
+    "Wind Capacity (W)",
+    1000,
+    10000,
+    4000
+)
+
+bat_cap = st.sidebar.slider(
+    "Battery Capacity (Wh)",
+    2000,
+    20000,
+    10000
+)
+
+base_target = st.sidebar.slider(
+    "Electrolyzer Target (W)",
+    1000,
+    5000,
+    2000
+)
+
+# ---------------- FETCH DATA ----------------
+
+g_today, t_today, w_spd_today, w_dir_today, g_tmrw = fetch_weather(
+    22.57,
+    88.36
+)
+
+# ---------------- AI LOGIC ----------------
+
 solar_arr = SolarPVArray(sol_cap)
+
 wind_turb = WindTurbine(wind_cap)
+
 bat = BatteryStorage(bat_cap)
 
-# AI Decision based on tomorrow's solar forecast
 if np.sum(g_tmrw) < 3000:
-    ai_status = "AI Alert: Low solar yield expected tomorrow. Activating Conservative Mode."
-    target_h2 = base_target * 0.7 
-    alert_type = "warning"
-else:
-    ai_status = "AI Alert: Maximum solar yield expected tomorrow. Activating Aggressive Mode."
-    target_h2 = base_target * 1.2
-    alert_type = "success"
 
-logs = {"solar": [], "wind": [], "h2": [], "bat": []}
+    ai_status = "⚠️ Low Solar Expected Tomorrow"
+
+    target_h2 = base_target * 0.7
+
+else:
+
+    ai_status = "✅ Maximum Solar Expected Tomorrow"
+
+    target_h2 = base_target * 1.2
+
+logs = {
+    "solar": [],
+    "wind": [],
+    "h2": [],
+    "bat": []
+}
 
 for i in range(24):
-    p_sun = solar_arr.get_power(g_today[i], t_today[i])
-    p_wind = wind_turb.get_power(w_spd_today[i], w_dir_today[i])
-    
+
+    p_sun = solar_arr.get_power(
+        g_today[i],
+        t_today[i]
+    )
+
+    p_wind = wind_turb.get_power(
+        w_spd_today[i],
+        w_dir_today[i]
+    )
+
     logs["solar"].append(p_sun)
+
     logs["wind"].append(p_wind)
-    
+
     available = p_sun + p_wind
-    
+
     if available >= target_h2:
+
         actual_h2 = target_h2
+
         available -= target_h2
+
     else:
-        actual_h2 = available + bat.discharge(target_h2 - available)
+
+        actual_h2 = available + bat.discharge(
+            target_h2 - available
+        )
+
         available = 0
-        
+
     logs["h2"].append(actual_h2)
+
     if available > 0:
         bat.charge(available)
+
     logs["bat"].append(bat.current_charge_wh)
 
-total_h2_kg = sum(logs["h2"]) * 0.000268 
+# ---------------- METRICS ----------------
 
-# Metrics
-st.markdown("Total Green Hydrogen Produced Today")
-st.header(f"{total_h2_kg:.3f} kg")
+total_h2_kg = sum(logs["h2"]) * 0.000268
 
-# --- 4. ORIGINAL MATPLOTLIB GRAPH (With Dual Axis Fix) ---
-fig, ax1 = plt.subplots(figsize=(12, 5))
+st.title("🧠 AI-Driven Smart Microgrid Dashboard")
 
-# Power Lines (Left Axis)
-ax1.plot(logs['solar'], label="Raw Solar Power (W)", color='orange', linestyle='--')
-ax1.plot(logs['wind'], label="Raw Wind Power (W)", color='blue', linestyle=':')
-ax1.plot(logs['h2'], label=f"AI Managed Power ({target_h2:.0f} W)", color='green', linewidth=2)
-ax1.set_xlabel("Hour of the Day")
-ax1.set_ylabel("Power (Watts)", color='black')
-ax1.grid(True, linestyle=':', alpha=0.6)
+st.markdown(
+    "AI-based renewable energy optimization for Solar + Wind + Hydrogen systems."
+)
 
-# Battery Fill (Right Axis)
-ax2 = ax1.twinx()
-ax2.fill_between(range(24), logs['bat'], color='purple', alpha=0.3, label="Battery Charge Level (Wh)")
-ax2.set_ylabel("Storage (Wh)", color='purple')
-ax2.set_ylim(0, bat_cap * 1.1)
+# ---------------- KPI CARDS ----------------
 
-# Combine legends from both axes
-lines_1, labels_1 = ax1.get_legend_handles_labels()
-lines_2, labels_2 = ax2.get_legend_handles_labels()
-ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper right', fontsize=8)
+col1, col2, col3, col4 = st.columns(4)
 
-st.pyplot(fig)
+with col1:
+    st.metric("☀️ Solar Peak", f"{max(logs['solar']):.0f} W")
 
-# Sidebar Alerts
+with col2:
+    st.metric("🌪 Wind Peak", f"{max(logs['wind']):.0f} W")
+
+with col3:
+    st.metric("🔋 Battery", f"{logs['bat'][-1]:.0f} Wh")
+
+with col4:
+    st.metric("🧪 Hydrogen", f"{total_h2_kg:.3f} kg")
+
+# ---------------- AI STATUS ----------------
+
+st.success(ai_status)
+
+# ---------------- PLOTLY GRAPH ----------------
+
+fig = make_subplots(
+    specs=[[{"secondary_y": True}]]
+)
+
+# Solar
+fig.add_trace(
+    go.Scatter(
+        x=list(range(24)),
+        y=logs['solar'],
+        mode='lines',
+        name='Solar Power',
+        line=dict(width=4, dash='dash')
+    ),
+    secondary_y=False
+)
+
+# Wind
+fig.add_trace(
+    go.Scatter(
+        x=list(range(24)),
+        y=logs['wind'],
+        mode='lines',
+        name='Wind Power',
+        line=dict(width=3, dash='dot')
+    ),
+    secondary_y=False
+)
+
+# AI Power
+fig.add_trace(
+    go.Scatter(
+        x=list(range(24)),
+        y=logs['h2'],
+        mode='lines',
+        name='AI Managed Power',
+        line=dict(width=5)
+    ),
+    secondary_y=False
+)
+
+# Battery
+fig.add_trace(
+    go.Scatter(
+        x=list(range(24)),
+        y=logs['bat'],
+        fill='tozeroy',
+        name='Battery Storage',
+        opacity=0.3
+    ),
+    secondary_y=True
+)
+
+fig.update_layout(
+    title="⚡ Smart Energy Flow",
+    template="plotly_dark",
+    height=600,
+    hovermode="x unified"
+)
+
+fig.update_xaxes(title_text="Hour")
+
+fig.update_yaxes(
+    title_text="Power (W)",
+    secondary_y=False
+)
+
+fig.update_yaxes(
+    title_text="Battery (Wh)",
+    secondary_y=True
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# ---------------- SIDEBAR AI ----------------
+
 st.sidebar.markdown("---")
-st.sidebar.subheader("🧠 AI Diagnostic Layer")
-if alert_type == "success":
-    st.sidebar.success(ai_status)
-else:
-    st.sidebar.warning(ai_status)
 
-st.sidebar.markdown(f"**Manual Target:** {base_target} W")
-st.sidebar.markdown(f"**AI Adjusted Target:** {target_h2:.1f} W")
+st.sidebar.subheader("🧠 AI Diagnostic Layer")
+
+st.sidebar.info(ai_status)
+
+st.sidebar.markdown(
+    f"### 🎯 AI Adjusted Target: {target_h2:.0f} W"
+)
